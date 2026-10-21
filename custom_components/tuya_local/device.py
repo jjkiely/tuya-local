@@ -429,6 +429,19 @@ class TuyaLocalDevice(object):
                     force_backoff = True
                     poll = None
 
+                # A persistent socket can stay open without delivering state
+                # after a device disconnects; force a fresh connection then.
+                if persist and not poll and now - last_cache > self._POLLING_INTERVAL:
+                    _LOGGER.warning(
+                        "%s has stale state; resetting connection",
+                        self.name,
+                    )
+                    persist = False
+                    self._api.set_socketPersistent(False)
+                    if self._api.parent:
+                        self._api.parent.set_socketPersistent(False)
+                    self._reset_cached_state()
+
                 if poll:
                     if "Err" in poll:
                         # Limit disconnects to the errors that are caused low level

@@ -643,6 +643,7 @@ async def test_async_receive(subject, mock_api, mocker):
     # since there was no state returned yet and it might need to negotiate
     # version.
     mock_api().set_socketPersistent.assert_called_once_with(False)
+
     # Check that a full poll was done
     mock_api().status.assert_called_once()
     assert result == {"1": "INIT", "2": 2, "full_poll": True}
@@ -681,6 +682,26 @@ async def test_async_receive(subject, mock_api, mocker):
     except StopAsyncIteration:
         pass
     mock_api().set_socketPersistent.assert_called_once_with(False)
+
+
+@pytest.mark.asyncio
+async def test_async_receive_resets_stale_persistent_state(subject, mock_api, mocker):
+    subject._running = True
+    subject._cached_state = {"1": "STALE", "updated_at": time() - 31}
+
+    def status():
+        subject._running = False
+        return None
+
+    mock_api().status.side_effect = status
+    mocker.patch.object(asyncio, "sleep", new=mocker.AsyncMock())
+
+    loop = subject.async_receive()
+    with pytest.raises(StopAsyncIteration):
+        await loop.__anext__()
+
+    mock_api().set_socketPersistent.assert_any_call(False)
+    assert subject._cached_state == {"updated_at": 0}
 
 
 @pytest.mark.asyncio
