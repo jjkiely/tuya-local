@@ -32,8 +32,6 @@ from .helpers.device_config import possible_matches
 from .helpers.log import log_json
 
 _LOGGER = logging.getLogger(__name__)
-_RECEIVE_LOOP_RESTART_DELAY = 5
-_RECEIVE_LOOP_MAX_RESTART_DELAY = 60
 
 # Extra context for tinytuya error codes whose message does not fully describe
 # the possible causes.  Error 914 in particular is reported for any failure to
@@ -95,8 +93,6 @@ class TuyaLocalDevice(object):
         self.dev_id = dev_id
         self.dev_cid = dev_cid
         self._entry_id = entry_id
-        self._address = address
-        self._local_key = local_key
         try:
             if dev_cid:
                 if hass.data[DOMAIN].get(dev_id) and name != "Test":
@@ -148,7 +144,6 @@ class TuyaLocalDevice(object):
             self._api.parent.set_socketRetryLimit(1)
 
         self._refresh_task = None
-        self._receive_loop_restart_delay = _RECEIVE_LOOP_RESTART_DELAY
         self._protocol_configured = protocol_version
         self._poll_only = poll_only
         self._temporary_poll = False
@@ -260,29 +255,6 @@ class TuyaLocalDevice(object):
         elif should_poll:
             entity.async_schedule_update_ha_state(True)
 
-    def _recreate_api(self):
-        """Replace TinyTuya state after a device connection becomes stale."""
-        self._api.set_socketPersistent(False)
-        if self._api.parent:
-            self._api.parent.set_socketPersistent(False)
-
-        if self.dev_cid:
-            parent = tinytuya.Device(self.dev_id, self._address, self._local_key)
-            self._api = tinytuya.Device(self.dev_cid, cid=self.dev_cid, parent=parent)
-            if self._name != "Test":
-                self._hass.data[DOMAIN][self.dev_id]["tuyadevice"] = parent
-        else:
-            self._api = tinytuya.Device(self.dev_id, self._address, self._local_key)
-            if self._name != "Test":
-                self._hass.data[DOMAIN][self.dev_id]["tuyadevice"] = self._api
-
-        self._api.set_socketRetryLimit(1)
-        if self._api.parent:
-            self._api.parent.set_socketRetryLimit(1)
-        self._api_protocol_version_index = None
-        self._api_protocol_working = False
-        self._api_working_protocol_failures = 0
-
     async def async_unregister_entity(self, entity):
         self._children.remove(entity)
         if not self._children:
@@ -296,7 +268,6 @@ class TuyaLocalDevice(object):
         try:
             async for poll in self.async_receive():
                 if isinstance(poll, dict):
-                    self._receive_loop_restart_delay = _RECEIVE_LOOP_RESTART_DELAY
                     self._stale_state_failures = 0
                     _LOGGER.debug(
                         "%s received %s",
@@ -346,24 +317,6 @@ class TuyaLocalDevice(object):
             if self._api.parent:
                 self._api.parent.set_socketPersistent(False)
             self._reset_cached_state()
-
-            if self._running and not self._hass.is_stopping:
-                # A natural loop exit leaves _running true but no task can
-                # restart it because actually_start sees the old task.
-                delay = self._receive_loop_restart_delay
-                self._receive_loop_restart_delay = min(
-                    delay * 2, _RECEIVE_LOOP_MAX_RESTART_DELAY
-                )
-                _LOGGER.warning(
-                    "%s receive loop exited unexpectedly; restarting in %s seconds",
-                    self.name,
-                    delay,
-                )
-                await asyncio.sleep(delay)
-                if self._running and not self._hass.is_stopping:
-                    self._refresh_task = self._hass.async_create_task(
-                        self.receive_loop()
-                    )
 
     @property
     def should_poll(self):
@@ -465,7 +418,6 @@ class TuyaLocalDevice(object):
                         "%s has stale state; resetting connection",
                         self.name,
                     )
-                    self._recreate_api()
                     persist = False
                     self._api.set_socketPersistent(False)
                     if self._api.parent:

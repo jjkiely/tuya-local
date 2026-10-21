@@ -704,46 +704,6 @@ async def test_async_receive_resets_stale_persistent_state(subject, mock_api, mo
     assert subject._cached_state == {"updated_at": 0}
 
 
-@pytest.mark.asyncio
-async def test_receive_loop_restarts_after_unexpected_termination(
-    subject, mocker, patched_hass
-):
-    async def receive():
-        if False:
-            yield {}
-
-    subject._running = True
-    subject.async_receive = receive
-    mocker.patch.object(asyncio, "sleep", new=mocker.AsyncMock())
-    task = object()
-
-    def create_task(coro):
-        coro.close()
-        return task
-
-    mocker.patch.object(patched_hass, "async_create_task", side_effect=create_task)
-
-    await subject.receive_loop()
-
-    assert subject._refresh_task is task
-    assert subject._receive_loop_restart_delay == 10
-
-
-@pytest.mark.asyncio
-async def test_receive_loop_does_not_restart_after_stop(subject, mocker, patched_hass):
-    async def receive():
-        if False:
-            yield {}
-
-    subject._running = False
-    subject.async_receive = receive
-    create_task = mocker.patch.object(patched_hass, "async_create_task")
-
-    await subject.receive_loop()
-
-    create_task.assert_not_called()
-
-
 def test_should_poll(subject):
     subject._cached_state = {"1": "sample", "updated_at": time()}
     subject._poll_only = False
