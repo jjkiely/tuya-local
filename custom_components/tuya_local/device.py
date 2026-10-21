@@ -424,7 +424,7 @@ class TuyaLocalDevice(object):
                         self._api.parent.set_socketPersistent(False)
                     self._reset_cached_state()
                     self._stale_state_failures += 1
-                    if self._entry_id and self._stale_state_failures >= 3:
+                    if self._entry_id and self._stale_state_failures >= 1:
                         _LOGGER.warning(
                             "%s remains stale; scheduling config entry reload",
                             self.name,
