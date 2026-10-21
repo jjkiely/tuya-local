@@ -92,6 +92,8 @@ class TuyaLocalDevice(object):
         self._api_working_protocol_failures = 0
         self.dev_id = dev_id
         self.dev_cid = dev_cid
+        self._address = address
+        self._local_key = local_key
         try:
             if dev_cid:
                 if hass.data[DOMAIN].get(dev_id) and name != "Test":
@@ -254,6 +256,29 @@ class TuyaLocalDevice(object):
             entity.async_schedule_update_ha_state()
         elif should_poll:
             entity.async_schedule_update_ha_state(True)
+
+    def _recreate_api(self):
+        """Replace TinyTuya state after a device connection becomes stale."""
+        self._api.set_socketPersistent(False)
+        if self._api.parent:
+            self._api.parent.set_socketPersistent(False)
+
+        if self.dev_cid:
+            parent = tinytuya.Device(self.dev_id, self._address, self._local_key)
+            self._api = tinytuya.Device(self.dev_cid, cid=self.dev_cid, parent=parent)
+            if self._name != "Test":
+                self._hass.data[DOMAIN][self.dev_id]["tuyadevice"] = parent
+        else:
+            self._api = tinytuya.Device(self.dev_id, self._address, self._local_key)
+            if self._name != "Test":
+                self._hass.data[DOMAIN][self.dev_id]["tuyadevice"] = self._api
+
+        self._api.set_socketRetryLimit(1)
+        if self._api.parent:
+            self._api.parent.set_socketRetryLimit(1)
+        self._api_protocol_version_index = None
+        self._api_protocol_working = False
+        self._api_working_protocol_failures = 0
 
     async def async_unregister_entity(self, entity):
         self._children.remove(entity)
@@ -436,6 +461,7 @@ class TuyaLocalDevice(object):
                         "%s has stale state; resetting connection",
                         self.name,
                     )
+                    self._recreate_api()
                     persist = False
                     self._api.set_socketPersistent(False)
                     if self._api.parent:
