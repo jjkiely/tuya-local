@@ -1125,7 +1125,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # DHCP lease change) is relocated and reconnected without manual
     # reconfiguration. Safe to call repeatedly; only one sweeper is started.
     await async_start_discovery(hass)
-    config = {**entry.data, **entry.options, "name": entry.title}
+    config = {
+        **entry.data,
+        **entry.options,
+        "name": entry.title,
+        "_entry_id": entry.entry_id,
+    }
     try:
         device = await hass.async_add_executor_job(setup_device, hass, config)
         await device.async_refresh()

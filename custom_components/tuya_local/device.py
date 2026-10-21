@@ -62,6 +62,7 @@ class TuyaLocalDevice(object):
         poll_only=False,
         manufacturer=None,
         model=None,
+        entry_id=None,
     ):
         """
         Represents a Tuya-based device.
@@ -90,8 +91,10 @@ class TuyaLocalDevice(object):
         self._api_protocol_version_index = None
         self._api_protocol_working = False
         self._api_working_protocol_failures = 0
+        self._stale_state_failures = 0
         self.dev_id = dev_id
         self.dev_cid = dev_cid
+        self._entry_id = entry_id
         self._address = address
         self._local_key = local_key
         try:
@@ -294,6 +297,7 @@ class TuyaLocalDevice(object):
             async for poll in self.async_receive():
                 if isinstance(poll, dict):
                     self._receive_loop_restart_delay = _RECEIVE_LOOP_RESTART_DELAY
+                    self._stale_state_failures = 0
                     _LOGGER.debug(
                         "%s received %s",
                         self.name,
@@ -467,6 +471,14 @@ class TuyaLocalDevice(object):
                     if self._api.parent:
                         self._api.parent.set_socketPersistent(False)
                     self._reset_cached_state()
+                    self._stale_state_failures += 1
+                    if self._entry_id and self._stale_state_failures >= 3:
+                        _LOGGER.warning(
+                            "%s remains stale; scheduling config entry reload",
+                            self.name,
+                        )
+                        self._stale_state_failures = 0
+                        self._hass.config_entries.async_schedule_reload(self._entry_id)
 
                 if poll:
                     if "Err" in poll:
@@ -918,6 +930,7 @@ def setup_device(hass: HomeAssistant, config: dict):
         config[CONF_POLL_ONLY],
         manufacturer=config.get(CONF_MANUFACTURER),
         model=config.get(CONF_MODEL),
+        entry_id=config.get("_entry_id"),
     )
     hass.data[DOMAIN][get_device_id(config)] = {
         "device": device,
