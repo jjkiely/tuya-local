@@ -32,6 +32,8 @@ from .helpers.device_config import possible_matches
 from .helpers.log import log_json
 
 _LOGGER = logging.getLogger(__name__)
+_RECEIVE_LOOP_RESTART_DELAY = 5
+_RECEIVE_LOOP_MAX_RESTART_DELAY = 60
 
 # Extra context for tinytuya error codes whose message does not fully describe
 # the possible causes.  Error 914 in particular is reported for any failure to
@@ -141,6 +143,7 @@ class TuyaLocalDevice(object):
             self._api.parent.set_socketRetryLimit(1)
 
         self._refresh_task = None
+        self._receive_loop_restart_delay = _RECEIVE_LOOP_RESTART_DELAY
         self._protocol_configured = protocol_version
         self._poll_only = poll_only
         self._temporary_poll = False
@@ -224,13 +227,15 @@ class TuyaLocalDevice(object):
         self._running = False
         self._children.clear()
         self._force_dps.clear()
-        if self._refresh_task:
+        refresh_task = self._refresh_task
+        if refresh_task:
             self._api.set_socketPersistent(False)
             if self._api.parent:
                 self._api.parent.set_socketPersistent(False)
-            await self._refresh_task
+            await refresh_task
+            if self._refresh_task is refresh_task:
+                self._refresh_task = None
         _LOGGER.debug("Monitor loop for %s stopped", self.name)
-        self._refresh_task = None
 
     def register_entity(self, entity):
         # If this is the first child entity to register, and HA is still
@@ -263,6 +268,7 @@ class TuyaLocalDevice(object):
         try:
             async for poll in self.async_receive():
                 if isinstance(poll, dict):
+                    self._receive_loop_restart_delay = _RECEIVE_LOOP_RESTART_DELAY
                     _LOGGER.debug(
                         "%s received %s",
                         self.name,
@@ -311,6 +317,24 @@ class TuyaLocalDevice(object):
             if self._api.parent:
                 self._api.parent.set_socketPersistent(False)
             self._reset_cached_state()
+
+            if self._running and not self._hass.is_stopping:
+                # A natural loop exit leaves _running true but no task can
+                # restart it because actually_start sees the old task.
+                delay = self._receive_loop_restart_delay
+                self._receive_loop_restart_delay = min(
+                    delay * 2, _RECEIVE_LOOP_MAX_RESTART_DELAY
+                )
+                _LOGGER.warning(
+                    "%s receive loop exited unexpectedly; restarting in %s seconds",
+                    self.name,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                if self._running and not self._hass.is_stopping:
+                    self._refresh_task = self._hass.async_create_task(
+                        self.receive_loop()
+                    )
 
     @property
     def should_poll(self):
