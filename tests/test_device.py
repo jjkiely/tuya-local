@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from time import time
+from unittest.mock import call
 
 import pytest
 
@@ -643,6 +644,7 @@ async def test_async_receive(subject, mock_api, mocker):
     # since there was no state returned yet and it might need to negotiate
     # version.
     mock_api().set_socketPersistent.assert_called_once_with(False)
+
     # Check that a full poll was done
     mock_api().status.assert_called_once()
     assert result == {"1": "INIT", "2": 2, "full_poll": True}
@@ -681,6 +683,83 @@ async def test_async_receive(subject, mock_api, mocker):
     except StopAsyncIteration:
         pass
     mock_api().set_socketPersistent.assert_called_once_with(False)
+
+
+@pytest.mark.asyncio
+async def test_async_receive_resets_stale_persistent_state(subject, mock_api, mocker):
+    subject._running = True
+    subject._cached_state = {"1": "STALE", "updated_at": time() - 31}
+
+    def status():
+        subject._running = False
+        return None
+
+    mock_api().status.side_effect = status
+    mocker.patch.object(asyncio, "sleep", new=mocker.AsyncMock())
+
+    loop = subject.async_receive()
+    with pytest.raises(StopAsyncIteration):
+        await loop.__anext__()
+
+    mock_api().set_socketPersistent.assert_any_call(False)
+    assert subject._cached_state == {"updated_at": 0}
+
+
+def test_schedule_config_entry_reload_once(subject, mocker):
+    subject._entry_id = "entry_id"
+    reload_entry = mocker.patch.object(
+        subject._hass.config_entries,
+        "async_schedule_reload",
+    )
+
+    subject._schedule_config_entry_reload()
+    subject._schedule_config_entry_reload()
+
+    reload_entry.assert_called_once_with("entry_id")
+
+
+def test_schedule_config_entry_reload_includes_shared_gateway_entries(
+    subject, mocker, patched_hass
+):
+    subject.dev_id = "gateway_id"
+    entries = [
+        mocker.Mock(entry_id="parent", data={CONF_DEVICE_ID: "gateway_id"}),
+        mocker.Mock(entry_id="child", data={CONF_DEVICE_ID: "gateway_id"}),
+    ]
+    mocker.patch.object(
+        patched_hass.config_entries,
+        "async_entries",
+        return_value=entries,
+    )
+    reload_entry = mocker.patch.object(
+        patched_hass.config_entries,
+        "async_schedule_reload",
+    )
+
+    subject._schedule_config_entry_reload()
+
+    assert reload_entry.call_args_list == [call("parent"), call("child")]
+
+
+@pytest.mark.asyncio
+async def test_receive_loop_schedules_reload_after_unexpected_exit(
+    subject, patched_hass, mocker
+):
+    async def receive():
+        if False:
+            yield {}
+
+    subject._entry_id = "entry_id"
+    subject._running = True
+    subject.async_receive = receive
+    reload_entry = mocker.patch.object(
+        patched_hass.config_entries,
+        "async_schedule_reload",
+    )
+
+    await subject.receive_loop()
+
+    reload_entry.assert_called_once_with("entry_id")
 
 
 def test_should_poll(subject):
