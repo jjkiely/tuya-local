@@ -263,6 +263,7 @@ class TuyaLocalDevice(object):
         reloads = domain_data.setdefault(DATA_RELOADS, set())
         if self.dev_id in reloads:
             return
+        # Child entries share the gateway socket, so recover the whole group.
         entry_ids = [
             entry.entry_id
             for entry in self._hass.config_entries.async_entries(DOMAIN)

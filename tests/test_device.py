@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from time import time
+from unittest.mock import call
 
 import pytest
 
@@ -715,6 +716,29 @@ def test_schedule_config_entry_reload_once(subject, mocker):
     subject._schedule_config_entry_reload()
 
     reload_entry.assert_called_once_with("entry_id")
+
+
+def test_schedule_config_entry_reload_includes_shared_gateway_entries(
+    subject, mocker, patched_hass
+):
+    subject.dev_id = "gateway_id"
+    entries = [
+        mocker.Mock(entry_id="parent", data={CONF_DEVICE_ID: "gateway_id"}),
+        mocker.Mock(entry_id="child", data={CONF_DEVICE_ID: "gateway_id"}),
+    ]
+    mocker.patch.object(
+        patched_hass.config_entries,
+        "async_entries",
+        return_value=entries,
+    )
+    reload_entry = mocker.patch.object(
+        patched_hass.config_entries,
+        "async_schedule_reload",
+    )
+
+    subject._schedule_config_entry_reload()
+
+    assert reload_entry.call_args_list == [call("parent"), call("child")]
 
 
 @pytest.mark.asyncio

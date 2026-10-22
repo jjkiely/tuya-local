@@ -1118,6 +1118,7 @@ async def async_migrate_entry(hass, entry: ConfigEntry):
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     device_id = get_device_id(entry.data)
+    # Clear the shared recovery guard when a new device lifecycle starts.
     hass.data.setdefault(DOMAIN, {}).setdefault(DATA_RELOADS, set()).discard(device_id)
     _LOGGER.debug(
         "Setting up entry for device: %s",
