@@ -25,6 +25,7 @@ from .const import (
     CONF_POLL_ONLY,
     CONF_PROTOCOL_VERSION,
     CONF_TYPE,
+    DATA_RELOADS,
     DOMAIN,
 )
 from .device import async_delete_device, get_device_id, setup_device
@@ -1117,6 +1118,8 @@ async def async_migrate_entry(hass, entry: ConfigEntry):
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     device_id = get_device_id(entry.data)
+    # Clear the shared recovery guard when a new device lifecycle starts.
+    hass.data.setdefault(DOMAIN, {}).setdefault(DATA_RELOADS, set()).discard(device_id)
     _LOGGER.debug(
         "Setting up entry for device: %s",
         device_id,
@@ -1125,7 +1128,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # DHCP lease change) is relocated and reconnected without manual
     # reconfiguration. Safe to call repeatedly; only one sweeper is started.
     await async_start_discovery(hass)
-    config = {**entry.data, **entry.options, "name": entry.title}
+    config = {
+        **entry.data,
+        **entry.options,
+        "name": entry.title,
+        "_entry_id": entry.entry_id,
+    }
     try:
         device = await hass.async_add_executor_job(setup_device, hass, config)
         await device.async_refresh()
@@ -1153,7 +1161,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     await hass.config_entries.async_forward_entry_setups(entry, entities)
     await async_setup_services(hass, entities)
 
-    entry.add_update_listener(async_update_entry)
+    entry.async_on_unload(entry.add_update_listener(async_update_entry))
 
     return True
 
