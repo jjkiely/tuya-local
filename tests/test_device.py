@@ -704,6 +704,40 @@ async def test_async_receive_resets_stale_persistent_state(subject, mock_api, mo
     assert subject._cached_state == {"updated_at": 0}
 
 
+def test_schedule_config_entry_reload_once(subject, mocker):
+    subject._entry_id = "entry_id"
+    reload_entry = mocker.patch.object(
+        subject._hass.config_entries,
+        "async_schedule_reload",
+    )
+
+    subject._schedule_config_entry_reload()
+    subject._schedule_config_entry_reload()
+
+    reload_entry.assert_called_once_with("entry_id")
+
+
+@pytest.mark.asyncio
+async def test_receive_loop_schedules_reload_after_unexpected_exit(
+    subject, patched_hass, mocker
+):
+    async def receive():
+        if False:
+            yield {}
+
+    subject._entry_id = "entry_id"
+    subject._running = True
+    subject.async_receive = receive
+    reload_entry = mocker.patch.object(
+        patched_hass.config_entries,
+        "async_schedule_reload",
+    )
+
+    await subject.receive_loop()
+
+    reload_entry.assert_called_once_with("entry_id")
+
+
 def test_should_poll(subject):
     subject._cached_state = {"1": "sample", "updated_at": time()}
     subject._poll_only = False

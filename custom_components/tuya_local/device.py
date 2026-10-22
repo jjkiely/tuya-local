@@ -89,6 +89,7 @@ class TuyaLocalDevice(object):
         self._api_protocol_version_index = None
         self._api_protocol_working = False
         self._api_working_protocol_failures = 0
+        self._reload_scheduled = False
         self.dev_id = dev_id
         self.dev_cid = dev_cid
         self._entry_id = entry_id
@@ -254,6 +255,17 @@ class TuyaLocalDevice(object):
         elif should_poll:
             entity.async_schedule_update_ha_state(True)
 
+    def _schedule_config_entry_reload(self):
+        """Schedule one config-entry reload for the current failure."""
+        if not self._entry_id or self._reload_scheduled or self._hass.is_stopping:
+            return
+        self._reload_scheduled = True
+        _LOGGER.warning(
+            "%s remains stale; scheduling config entry reload",
+            self.name,
+        )
+        self._hass.config_entries.async_schedule_reload(self._entry_id)
+
     async def async_unregister_entity(self, entity):
         self._children.remove(entity)
         if not self._children:
@@ -315,6 +327,8 @@ class TuyaLocalDevice(object):
             if self._api.parent:
                 self._api.parent.set_socketPersistent(False)
             self._reset_cached_state()
+            if self._running and not self._hass.is_stopping:
+                self._schedule_config_entry_reload()
 
     @property
     def should_poll(self):
@@ -426,12 +440,7 @@ class TuyaLocalDevice(object):
                     if self._api.parent:
                         self._api.parent.set_socketPersistent(False)
                     self._reset_cached_state()
-                    if self._entry_id:
-                        _LOGGER.warning(
-                            "%s remains stale; scheduling config entry reload",
-                            self.name,
-                        )
-                        self._hass.config_entries.async_schedule_reload(self._entry_id)
+                    self._schedule_config_entry_reload()
 
                 if poll:
                     if "Err" in poll:
