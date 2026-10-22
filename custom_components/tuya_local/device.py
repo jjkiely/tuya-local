@@ -25,6 +25,7 @@ from .const import (
     CONF_MODEL,
     CONF_POLL_ONLY,
     CONF_PROTOCOL_VERSION,
+    DATA_RELOADS,
     DOMAIN,
 )
 from .helpers.config import get_device_id
@@ -89,7 +90,6 @@ class TuyaLocalDevice(object):
         self._api_protocol_version_index = None
         self._api_protocol_working = False
         self._api_working_protocol_failures = 0
-        self._reload_scheduled = False
         self.dev_id = dev_id
         self.dev_cid = dev_cid
         self._entry_id = entry_id
@@ -257,14 +257,29 @@ class TuyaLocalDevice(object):
 
     def _schedule_config_entry_reload(self):
         """Schedule one config-entry reload for the current failure."""
-        if not self._entry_id or self._reload_scheduled or self._hass.is_stopping:
+        if self._hass.is_stopping:
             return
-        self._reload_scheduled = True
+        domain_data = self._hass.data.setdefault(DOMAIN, {})
+        reloads = domain_data.setdefault(DATA_RELOADS, set())
+        if self.dev_id in reloads:
+            return
+        entry_ids = [
+            entry.entry_id
+            for entry in self._hass.config_entries.async_entries(DOMAIN)
+            if entry.data.get(CONF_DEVICE_ID) == self.dev_id
+        ]
+        if not entry_ids and self._entry_id:
+            entry_ids = [self._entry_id]
+        if not entry_ids:
+            return
+        reloads.add(self.dev_id)
         _LOGGER.warning(
-            "%s remains stale; scheduling config entry reload",
+            "%s remains stale; scheduling %d config entry reload(s)",
             self.name,
+            len(entry_ids),
         )
-        self._hass.config_entries.async_schedule_reload(self._entry_id)
+        for entry_id in entry_ids:
+            self._hass.config_entries.async_schedule_reload(entry_id)
 
     async def async_unregister_entity(self, entity):
         self._children.remove(entity)

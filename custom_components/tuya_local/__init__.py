@@ -25,6 +25,7 @@ from .const import (
     CONF_POLL_ONLY,
     CONF_PROTOCOL_VERSION,
     CONF_TYPE,
+    DATA_RELOADS,
     DOMAIN,
 )
 from .device import async_delete_device, get_device_id, setup_device
@@ -1117,6 +1118,7 @@ async def async_migrate_entry(hass, entry: ConfigEntry):
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     device_id = get_device_id(entry.data)
+    hass.data.setdefault(DOMAIN, {}).setdefault(DATA_RELOADS, set()).discard(device_id)
     _LOGGER.debug(
         "Setting up entry for device: %s",
         device_id,
