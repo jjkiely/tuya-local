@@ -89,7 +89,6 @@ class TuyaLocalDevice(object):
         self._api_protocol_version_index = None
         self._api_protocol_working = False
         self._api_working_protocol_failures = 0
-        self._stale_state_failures = 0
         self.dev_id = dev_id
         self.dev_cid = dev_cid
         self._entry_id = entry_id
@@ -268,7 +267,6 @@ class TuyaLocalDevice(object):
         try:
             async for poll in self.async_receive():
                 if isinstance(poll, dict):
-                    self._stale_state_failures = 0
                     _LOGGER.debug(
                         "%s received %s",
                         self.name,
@@ -413,7 +411,12 @@ class TuyaLocalDevice(object):
 
                 # A persistent socket can stay open without delivering state
                 # after a device disconnects; force a fresh connection then.
-                if persist and not poll and now - last_cache > self._POLLING_INTERVAL:
+                if (
+                    persist
+                    and not poll
+                    and now - self._cached_state.get("updated_at", 0)
+                    > self._POLLING_INTERVAL
+                ):
                     _LOGGER.warning(
                         "%s has stale state; resetting connection",
                         self.name,
@@ -423,13 +426,11 @@ class TuyaLocalDevice(object):
                     if self._api.parent:
                         self._api.parent.set_socketPersistent(False)
                     self._reset_cached_state()
-                    self._stale_state_failures += 1
-                    if self._entry_id and self._stale_state_failures >= 1:
+                    if self._entry_id:
                         _LOGGER.warning(
                             "%s remains stale; scheduling config entry reload",
                             self.name,
                         )
-                        self._stale_state_failures = 0
                         self._hass.config_entries.async_schedule_reload(self._entry_id)
 
                 if poll:

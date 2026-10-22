@@ -1158,7 +1158,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     await hass.config_entries.async_forward_entry_setups(entry, entities)
     await async_setup_services(hass, entities)
 
-    entry.add_update_listener(async_update_entry)
+    entry.async_on_unload(entry.add_update_listener(async_update_entry))
 
     return True
 
