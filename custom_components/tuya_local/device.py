@@ -25,6 +25,7 @@ from .const import (
     CONF_MODEL,
     CONF_POLL_ONLY,
     CONF_PROTOCOL_VERSION,
+    DATA_RELOADS,
     DOMAIN,
 )
 from .helpers.config import get_device_id
@@ -60,6 +61,7 @@ class TuyaLocalDevice(object):
         poll_only=False,
         manufacturer=None,
         model=None,
+        entry_id=None,
     ):
         """
         Represents a Tuya-based device.
@@ -90,6 +92,7 @@ class TuyaLocalDevice(object):
         self._api_working_protocol_failures = 0
         self.dev_id = dev_id
         self.dev_cid = dev_cid
+        self._entry_id = entry_id
         try:
             if dev_cid:
                 if hass.data[DOMAIN].get(dev_id) and name != "Test":
@@ -224,13 +227,15 @@ class TuyaLocalDevice(object):
         self._running = False
         self._children.clear()
         self._force_dps.clear()
-        if self._refresh_task:
+        refresh_task = self._refresh_task
+        if refresh_task:
             self._api.set_socketPersistent(False)
             if self._api.parent:
                 self._api.parent.set_socketPersistent(False)
-            await self._refresh_task
+            await refresh_task
+            if self._refresh_task is refresh_task:
+                self._refresh_task = None
         _LOGGER.debug("Monitor loop for %s stopped", self.name)
-        self._refresh_task = None
 
     def register_entity(self, entity):
         # If this is the first child entity to register, and HA is still
@@ -249,6 +254,33 @@ class TuyaLocalDevice(object):
             entity.async_schedule_update_ha_state()
         elif should_poll:
             entity.async_schedule_update_ha_state(True)
+
+    def _schedule_config_entry_reload(self):
+        """Schedule one config-entry reload for the current failure."""
+        if self._hass.is_stopping:
+            return
+        domain_data = self._hass.data.setdefault(DOMAIN, {})
+        reloads = domain_data.setdefault(DATA_RELOADS, set())
+        if self.dev_id in reloads:
+            return
+        # Child entries share the gateway socket, so recover the whole group.
+        entry_ids = [
+            entry.entry_id
+            for entry in self._hass.config_entries.async_entries(DOMAIN)
+            if entry.data.get(CONF_DEVICE_ID) == self.dev_id
+        ]
+        if not entry_ids and self._entry_id:
+            entry_ids = [self._entry_id]
+        if not entry_ids:
+            return
+        reloads.add(self.dev_id)
+        _LOGGER.warning(
+            "%s remains stale; scheduling %d config entry reload(s)",
+            self.name,
+            len(entry_ids),
+        )
+        for entry_id in entry_ids:
+            self._hass.config_entries.async_schedule_reload(entry_id)
 
     async def async_unregister_entity(self, entity):
         self._children.remove(entity)
@@ -311,6 +343,8 @@ class TuyaLocalDevice(object):
             if self._api.parent:
                 self._api.parent.set_socketPersistent(False)
             self._reset_cached_state()
+            if self._running and not self._hass.is_stopping:
+                self._schedule_config_entry_reload()
 
     @property
     def should_poll(self):
@@ -404,6 +438,25 @@ class TuyaLocalDevice(object):
                 else:
                     force_backoff = True
                     poll = None
+
+                # A persistent socket can stay open without delivering state
+                # after a device disconnects; force a fresh connection then.
+                if (
+                    persist
+                    and not poll
+                    and now - self._cached_state.get("updated_at", 0)
+                    > self._POLLING_INTERVAL
+                ):
+                    _LOGGER.warning(
+                        "%s has stale state; resetting connection",
+                        self.name,
+                    )
+                    persist = False
+                    self._api.set_socketPersistent(False)
+                    if self._api.parent:
+                        self._api.parent.set_socketPersistent(False)
+                    self._reset_cached_state()
+                    self._schedule_config_entry_reload()
 
                 if poll:
                     if "Err" in poll:
@@ -855,6 +908,7 @@ def setup_device(hass: HomeAssistant, config: dict):
         config[CONF_POLL_ONLY],
         manufacturer=config.get(CONF_MANUFACTURER),
         model=config.get(CONF_MODEL),
+        entry_id=config.get("_entry_id"),
     )
     hass.data[DOMAIN][get_device_id(config)] = {
         "device": device,
